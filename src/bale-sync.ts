@@ -168,7 +168,9 @@ class BaleSync {
                 await this.deletePostData(postData)
               } else if (postData.editDate !== cachedMetadata.editDate && !postData.deleted) {
                 // Post was edited
-                console.log(`✏️ Post ${postData.id} was edited - sending edit request`)
+                console.log(
+                  `✏️ Post ${postData.id} was edited - sending edit request for id: ${cachedMetadata.baleMessageId}`,
+                )
                 await this.editMessage(cachedMetadata.baleMessageId, postData.text)
 
                 // Update metadata and remove post data
@@ -308,25 +310,25 @@ class BaleSync {
 
   private getFileType(filePath: string): 'photo' | 'video' | 'audio' | 'document' {
     const ext = path.extname(filePath).toLowerCase()
-    
+
     // Image formats
     const imageFormats = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
     if (imageFormats.includes(ext)) {
       return 'photo'
     }
-    
+
     // Video formats
     const videoFormats = ['.mp4', '.avi', '.mov', '.mkv', '.webm', '.flv', '.wmv', '.m4v']
     if (videoFormats.includes(ext)) {
       return 'video'
     }
-    
+
     // Audio formats
     const audioFormats = ['.mp3', '.m4a', '.wav', '.flac', '.aac', '.ogg', '.wma']
     if (audioFormats.includes(ext)) {
       return 'audio'
     }
-    
+
     // Default to document for everything else
     return 'document'
   }
@@ -339,11 +341,11 @@ class BaleSync {
       const fileBuffer = await fs.readFile(filePath)
       const fileName = path.basename(filePath)
       const fileType = this.getFileType(filePath)
-      
+
       let url: string
       let fileFieldName: string
       let emoji: string
-      
+
       // Determine API endpoint and field name based on file type
       switch (fileType) {
         case 'photo':
@@ -390,7 +392,11 @@ class BaleSync {
         throw new Error(`Bale API error: ${result.description || result.error || 'Unknown error'}`)
       }
 
-      console.log(`${emoji} ${fileType.charAt(0).toUpperCase() + fileType.slice(1)} sent successfully: ${fileName}`)
+      console.log(
+        `${emoji} ${
+          fileType.charAt(0).toUpperCase() + fileType.slice(1)
+        } sent successfully: ${fileName}`,
+      )
       return result
     } catch (error) {
       console.error(`❌ Error sending file ${filePath}:`, error)
