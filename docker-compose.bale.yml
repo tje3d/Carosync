@@ -3,14 +3,14 @@ version: '3.8'
 services:
   carosync:
     image: oven/bun:1.2.7
-    container_name: carosync-app
+    container_name: carosync-app-bale
     working_dir: /app
     volumes:
       - .:/app
       - /app/node_modules
     env_file:
       - .env
-    command: sh -c "apt update && apt install -y python3 make g++ && bun install && bun run start:eitaa"
+    command: sh -c "apt update && apt install -y python3 make g++ && bun install && bun run start:bale"
     environment:
       - NODE_ENV=production
     restart: unless-stopped

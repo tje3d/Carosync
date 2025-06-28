@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  carosync:
+    image: oven/bun:1.2.7
+    container_name: carosync-app-eitaa
+    working_dir: /app
+    volumes:
+      - .:/app
+      - /app/node_modules
+    env_file:
+      - .env
+    command: sh -c "apt update && apt install -y python3 make g++ && bun install && bun run start:eitaa"
+    environment:
+      - NODE_ENV=production
+    restart: unless-stopped
