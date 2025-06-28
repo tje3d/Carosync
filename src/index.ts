@@ -31,6 +31,7 @@ class TelegramChannelSync {
   private apiHash: string
   private storagePath: string
   private mediaGroups: Map<string, Api.Message[]> = new Map()
+  private processedPosts: Set<string> = new Set()
 
   constructor(apiId: number, apiHash: string, session: string, storagePath = './data') {
     this.apiId = apiId
@@ -58,6 +59,25 @@ class TelegramChannelSync {
   private async ensureStorage() {
     await fs.mkdir(this.storagePath, { recursive: true })
     await fs.mkdir(path.join(this.storagePath, 'media'), { recursive: true })
+    await this.loadProcessedPosts()
+  }
+
+  private async loadProcessedPosts() {
+    try {
+      const processedFile = path.join(this.storagePath, 'eitaa_processed.json')
+      const data = await fs.readFile(processedFile, 'utf-8')
+      const processedIds = JSON.parse(data) as string[]
+      this.processedPosts = new Set(processedIds)
+      console.log(`📋 Loaded ${processedIds.length} processed posts from eitaa_processed.json`)
+    } catch (error) {
+      // File doesn't exist or can't be read, start with empty set
+      this.processedPosts = new Set()
+      console.log('📋 No processed posts file found, starting fresh')
+    }
+  }
+
+  private isPostAlreadyProcessed(postId: string | number): boolean {
+    return this.processedPosts.has(postId.toString())
   }
 
   private async cleanupSyncStatus() {
@@ -157,8 +177,16 @@ class TelegramChannelSync {
     const mainMessage = messages[0]
     if (!mainMessage) return
 
+    const groupId = `group_${mainMessage.groupedId}`
+    
+    // Check if this media group is already processed
+    if (this.isPostAlreadyProcessed(groupId)) {
+      console.log(`⏭️  Skipping already processed media group: ${groupId}`)
+      return
+    }
+
     const postData: PostData = {
-      id: `group_${mainMessage.groupedId}`,
+      id: groupId,
       date: mainMessage.date,
       editDate: mainMessage.editDate,
       text: mainMessage.text,
@@ -194,6 +222,12 @@ class TelegramChannelSync {
 
   private async processMessage(message: Api.Message) {
     try {
+      // Check if this message is already processed
+      if (this.isPostAlreadyProcessed(message.id)) {
+        console.log(`⏭️  Skipping already processed message: ${message.id}`)
+        return
+      }
+      
       const postData: PostData = {
         id: message.id,
         date: message.date,
@@ -485,6 +519,7 @@ class TelegramChannelSync {
       let newPosts = 0
       let updatedPosts = 0
       let skippedPosts = 0
+      let alreadyProcessedPosts = 0
 
       for (const message of messages) {
         if (!message || typeof message.id === 'undefined') continue
@@ -492,6 +527,14 @@ class TelegramChannelSync {
         // Check if this is a media group message
         if (message.groupedId) {
           const groupId = `group_${message.groupedId}`
+          
+          // Check if this media group is already processed
+          if (this.isPostAlreadyProcessed(groupId)) {
+            alreadyProcessedPosts++
+            console.log(`⏭️  Skipping already processed media group: ${groupId}`)
+            continue
+          }
+          
           const existingGroup = await this.getExistingPostData(groupId)
 
           if (!existingGroup) {
@@ -535,6 +578,14 @@ class TelegramChannelSync {
           }
         } else {
           // Regular message
+          
+          // Check if this message is already processed
+          if (this.isPostAlreadyProcessed(message.id)) {
+            alreadyProcessedPosts++
+            console.log(`⏭️  Skipping already processed message: ${message.id}`)
+            continue
+          }
+          
           const existingPost = await this.getExistingPostData(message.id)
 
           if (!existingPost) {
@@ -571,7 +622,7 @@ class TelegramChannelSync {
       }
 
       console.log(
-        `Sync completed: ${newPosts} new posts, ${updatedPosts} updated posts, ${skippedPosts} skipped posts`,
+        `Sync completed: ${newPosts} new posts, ${updatedPosts} updated posts, ${skippedPosts} skipped posts, ${alreadyProcessedPosts} already processed posts`,
       )
       
       // Mark sync as completed
@@ -580,7 +631,8 @@ class TelegramChannelSync {
         endTime: Date.now(),
         newPosts,
         updatedPosts,
-        skippedPosts 
+        skippedPosts,
+        alreadyProcessedPosts 
       }, null, 2))
       
     } catch (error) {
