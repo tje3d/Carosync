@@ -171,7 +171,7 @@ class BaleSync {
                 console.log(
                   `✏️ Post ${postData.id} was edited - sending edit request for id: ${cachedMetadata.baleMessageId}`,
                 )
-                await this.editMessage(cachedMetadata.baleMessageId, postData.text)
+                // await this.editMessage(cachedMetadata.baleMessageId, postData.text)
 
                 // Update metadata and remove post data
                 this.processedPosts.set(postId, {
