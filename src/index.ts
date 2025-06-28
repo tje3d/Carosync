@@ -1,3 +1,4 @@
+import 'dotenv/config'
 import fs from 'fs/promises'
 import input from 'input'
 import path from 'path'
@@ -8,7 +9,6 @@ import { DeletedMessage, DeletedMessageEvent } from 'telegram/events/DeletedMess
 import { EditedMessage, EditedMessageEvent } from 'telegram/events/EditedMessage'
 import { StringSession } from 'telegram/sessions'
 import { Api } from 'telegram/tl'
-import 'dotenv/config'
 
 interface PostData {
   id: string | number
@@ -31,7 +31,6 @@ class TelegramChannelSync {
   private apiHash: string
   private storagePath: string
   private mediaGroups: Map<string, Api.Message[]> = new Map()
-  private processedPosts: Set<string> = new Set()
 
   constructor(apiId: number, apiHash: string, session: string, storagePath = './data') {
     this.apiId = apiId
@@ -59,25 +58,6 @@ class TelegramChannelSync {
   private async ensureStorage() {
     await fs.mkdir(this.storagePath, { recursive: true })
     await fs.mkdir(path.join(this.storagePath, 'media'), { recursive: true })
-    await this.loadProcessedPosts()
-  }
-
-  private async loadProcessedPosts() {
-    try {
-      const processedFile = path.join(this.storagePath, 'eitaa_processed.json')
-      const data = await fs.readFile(processedFile, 'utf-8')
-      const processedIds = JSON.parse(data) as string[]
-      this.processedPosts = new Set(processedIds)
-      console.log(`📋 Loaded ${processedIds.length} processed posts from eitaa_processed.json`)
-    } catch (error) {
-      // File doesn't exist or can't be read, start with empty set
-      this.processedPosts = new Set()
-      console.log('📋 No processed posts file found, starting fresh')
-    }
-  }
-
-  private isPostAlreadyProcessed(postId: string | number): boolean {
-    return this.processedPosts.has(postId.toString())
   }
 
   private async cleanupSyncStatus() {
@@ -178,12 +158,6 @@ class TelegramChannelSync {
     if (!mainMessage) return
 
     const groupId = `group_${mainMessage.groupedId}`
-    
-    // Check if this media group is already processed
-    if (this.isPostAlreadyProcessed(groupId)) {
-      console.log(`⏭️  Skipping already processed media group: ${groupId}`)
-      return
-    }
 
     const postData: PostData = {
       id: groupId,
@@ -222,12 +196,6 @@ class TelegramChannelSync {
 
   private async processMessage(message: Api.Message) {
     try {
-      // Check if this message is already processed
-      if (this.isPostAlreadyProcessed(message.id)) {
-        console.log(`⏭️  Skipping already processed message: ${message.id}`)
-        return
-      }
-      
       const postData: PostData = {
         id: message.id,
         date: message.date,
@@ -426,10 +394,21 @@ class TelegramChannelSync {
     try {
       const existingPost = await this.getExistingPostData(messageId)
       if (existingPost) {
-        // Mark as deleted
+        // Mark existing post as deleted
         existingPost.deleted = true
         await this.savePostData(existingPost)
         console.log(`Marked post ${messageId} as deleted`)
+      } else {
+        // Create new post data with deleted flag
+        const postData: PostData = {
+          id: messageId,
+          date: Math.floor(Date.now() / 1000),
+          text: '',
+          media: [],
+          deleted: true
+        }
+        await this.savePostData(postData)
+        console.log(`Created deleted post entry for ${messageId}`)
       }
 
       // Also check for media groups that might contain this message
@@ -491,14 +470,21 @@ class TelegramChannelSync {
 
   async syncLatestPosts(channelId: string, limit: number = 15) {
     await this.ensureStorage()
-    
+
     // Create sync status file to signal that Telegram sync is in progress
     const syncStatusFile = path.join(this.storagePath, 'telegram_sync_status.json')
-    await fs.writeFile(syncStatusFile, JSON.stringify({ 
-      status: 'in_progress', 
-      startTime: Date.now(),
-      limit: limit 
-    }, null, 2))
+    await fs.writeFile(
+      syncStatusFile,
+      JSON.stringify(
+        {
+          status: 'in_progress',
+          startTime: Date.now(),
+          limit: limit,
+        },
+        null,
+        2,
+      ),
+    )
 
     const channel = (await this.client.getEntity(channelId)) as Entity
     const channelName =
@@ -519,7 +505,6 @@ class TelegramChannelSync {
       let newPosts = 0
       let updatedPosts = 0
       let skippedPosts = 0
-      let alreadyProcessedPosts = 0
 
       for (const message of messages) {
         if (!message || typeof message.id === 'undefined') continue
@@ -527,14 +512,7 @@ class TelegramChannelSync {
         // Check if this is a media group message
         if (message.groupedId) {
           const groupId = `group_${message.groupedId}`
-          
-          // Check if this media group is already processed
-          if (this.isPostAlreadyProcessed(groupId)) {
-            alreadyProcessedPosts++
-            console.log(`⏭️  Skipping already processed media group: ${groupId}`)
-            continue
-          }
-          
+
           const existingGroup = await this.getExistingPostData(groupId)
 
           if (!existingGroup) {
@@ -578,14 +556,7 @@ class TelegramChannelSync {
           }
         } else {
           // Regular message
-          
-          // Check if this message is already processed
-          if (this.isPostAlreadyProcessed(message.id)) {
-            alreadyProcessedPosts++
-            console.log(`⏭️  Skipping already processed message: ${message.id}`)
-            continue
-          }
-          
+
           const existingPost = await this.getExistingPostData(message.id)
 
           if (!existingPost) {
@@ -622,28 +593,40 @@ class TelegramChannelSync {
       }
 
       console.log(
-        `Sync completed: ${newPosts} new posts, ${updatedPosts} updated posts, ${skippedPosts} skipped posts, ${alreadyProcessedPosts} already processed posts`,
+        `Sync completed: ${newPosts} new posts, ${updatedPosts} updated posts, ${skippedPosts} skipped posts`,
       )
-      
+
       // Mark sync as completed
-      await fs.writeFile(syncStatusFile, JSON.stringify({ 
-        status: 'completed', 
-        endTime: Date.now(),
-        newPosts,
-        updatedPosts,
-        skippedPosts,
-        alreadyProcessedPosts 
-      }, null, 2))
-      
+      await fs.writeFile(
+        syncStatusFile,
+        JSON.stringify(
+          {
+            status: 'completed',
+            endTime: Date.now(),
+            newPosts,
+            updatedPosts,
+            skippedPosts,
+          },
+          null,
+          2,
+        ),
+      )
     } catch (error) {
       console.error('Error syncing latest posts:', error)
-      
+
       // Mark sync as failed
-      await fs.writeFile(syncStatusFile, JSON.stringify({ 
-        status: 'failed', 
-        endTime: Date.now(),
-        error: error instanceof Error ? error.message : 'Unknown error' 
-      }, null, 2))
+      await fs.writeFile(
+        syncStatusFile,
+        JSON.stringify(
+          {
+            status: 'failed',
+            endTime: Date.now(),
+            error: error instanceof Error ? error.message : 'Unknown error',
+          },
+          null,
+          2,
+        ),
+      )
     }
   }
 }
@@ -657,14 +640,16 @@ class TelegramChannelSync {
   const CHANNEL = process.env.CHANNEL || ''
   const STORAGE_PATH = process.env.STORAGE_PATH || './data'
   const SYNC_LIMIT = parseInt(process.env.SYNC_LIMIT || '5')
-  
+
   // Eitaa configuration (optional)
   const EITAA_TOKEN = process.env.EITAA_TOKEN || ''
   const EITAA_CHAT_ID = process.env.EITAA_CHAT_ID || ''
 
   // Validate required environment variables
   if (!API_ID || !API_HASH || !PHONE || !CHANNEL) {
-    console.error('❌ Missing required Telegram environment variables. Please check your .env file.')
+    console.error(
+      '❌ Missing required Telegram environment variables. Please check your .env file.',
+    )
     console.error('Required: API_ID, API_HASH, PHONE, CHANNEL')
     process.exit(1)
   }
@@ -673,7 +658,7 @@ class TelegramChannelSync {
   await sync.start(PHONE)
 
   console.log('🚀 Starting CaroSync - Telegram Channel Sync...')
-  
+
   // Start monitoring for new posts immediately (non-blocking)
   const monitoringPromise = sync.monitorChannel(CHANNEL)
 
@@ -690,7 +675,7 @@ class TelegramChannelSync {
     try {
       const { default: EitaaSync } = await import('./eitaa-sync.js')
       eitaaSync = new EitaaSync(EITAA_TOKEN, EITAA_CHAT_ID, STORAGE_PATH)
-      
+
       // Test Eitaa connection
       const connectionTest = await eitaaSync.testConnection()
       if (connectionTest) {

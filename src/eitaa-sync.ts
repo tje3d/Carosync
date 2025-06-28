@@ -22,12 +22,18 @@ interface PostData {
   pinnedDate?: number
 }
 
+interface ProcessedPostMetadata {
+  date?: number
+  editDate?: number
+  deleted?: boolean
+}
+
 class EitaaSync {
   private token: string
   private chatId: string
   private baseUrl: string
   private storagePath: string
-  private processedPosts: Set<string> = new Set()
+  private processedPosts: Map<string, ProcessedPostMetadata> = new Map()
 
   constructor(token: string, chatId: string, storagePath = './data') {
     this.token = token
@@ -39,10 +45,10 @@ class EitaaSync {
   async start() {
     console.log('🚀 Starting Eitaa Sync Service...')
     await this.loadProcessedPosts()
-    
+
     // Wait for any ongoing Telegram sync to complete before starting
     await this.waitForTelegramSync()
-    
+
     await this.syncExistingPosts()
     this.startWatching()
   }
@@ -51,8 +57,8 @@ class EitaaSync {
     try {
       const processedFile = path.join(this.storagePath, 'eitaa_processed.json')
       const data = await fs.readFile(processedFile, 'utf-8')
-      const processed = JSON.parse(data) as string[]
-      this.processedPosts = new Set(processed)
+      const processed = JSON.parse(data) as Record<string, ProcessedPostMetadata>
+      this.processedPosts = new Map(Object.entries(processed))
       console.log(`📋 Loaded ${this.processedPosts.size} processed posts`)
     } catch (error) {
       console.log('📋 No processed posts file found, starting fresh')
@@ -62,7 +68,8 @@ class EitaaSync {
   private async saveProcessedPosts() {
     try {
       const processedFile = path.join(this.storagePath, 'eitaa_processed.json')
-      await fs.writeFile(processedFile, JSON.stringify(Array.from(this.processedPosts), null, 2))
+      const processedObj = Object.fromEntries(this.processedPosts)
+      await fs.writeFile(processedFile, JSON.stringify(processedObj, null, 2))
     } catch (error) {
       console.error('❌ Error saving processed posts:', error)
     }
@@ -102,25 +109,78 @@ class EitaaSync {
           console.log('⏳ Telegram sync in progress, waiting...')
           return
         }
-        
+
         const files = await fs.readdir(this.storagePath)
         const postFiles = files.filter((file) => file.startsWith('post_') && file.endsWith('.json'))
 
         // Load and sort new posts by date
         const newPosts = await this.loadAndSortPosts(postFiles)
-        const unprocessedPosts = newPosts.filter(
-          (postData) =>
-            postData && !postData.deleted && !this.processedPosts.has(postData.id.toString()),
-        )
-
-        for (const postData of unprocessedPosts) {
-          console.log(
-            `🆕 New post detected: ${postData.id} (date: ${new Date(
-              postData.date! * 1000,
-            ).toISOString()})`,
-          )
-          await this.syncPost(postData)
-          await new Promise((resolve) => setTimeout(resolve, 1000)) // Rate limiting
+        
+        for (const postData of newPosts) {
+          if (!postData) continue
+          
+          const postId = postData.id.toString()
+          const cachedMetadata = this.processedPosts.get(postId)
+          
+          if (!cachedMetadata) {
+            // New post - sync if not deleted
+            if (!postData.deleted) {
+              console.log(
+                `🆕 New post detected: ${postData.id} (date: ${new Date(
+                  postData.date! * 1000,
+                ).toISOString()})`,
+              )
+              await this.syncPost(postData)
+              await new Promise((resolve) => setTimeout(resolve, 1000)) // Rate limiting
+            } else {
+              // New but already deleted post - just mark as processed
+              this.processedPosts.set(postId, {
+                date: postData.date,
+                editDate: postData.editDate,
+                deleted: postData.deleted
+              })
+              await this.saveProcessedPosts()
+              await this.deletePostData(postData)
+            }
+          } else {
+            // Existing post - check for changes
+            const hasChanges = 
+              cachedMetadata.editDate !== postData.editDate ||
+              cachedMetadata.deleted !== postData.deleted
+            
+            if (hasChanges) {
+              if (postData.deleted && !cachedMetadata.deleted) {
+                // Post was deleted
+                console.log(`🗑️ Post ${postData.id} was deleted - logging delete request`)
+                console.log(`📝 Would send delete request for post ${postData.id} (API not available)`)
+                
+                // Update metadata and remove post data
+                this.processedPosts.set(postId, {
+                  date: postData.date,
+                  editDate: postData.editDate,
+                  deleted: postData.deleted
+                })
+                await this.saveProcessedPosts()
+                await this.deletePostData(postData)
+              } else if (postData.editDate !== cachedMetadata.editDate && !postData.deleted) {
+                // Post was edited
+                console.log(`✏️ Post ${postData.id} was edited - logging edit request`)
+                console.log(`📝 Would send edit request for post ${postData.id} (API not available)`)
+                
+                // Update metadata and remove post data
+                this.processedPosts.set(postId, {
+                  date: postData.date,
+                  editDate: postData.editDate,
+                  deleted: postData.deleted
+                })
+                await this.saveProcessedPosts()
+                await this.deletePostData(postData)
+              }
+            } else {
+              // No changes - just remove post data
+              await this.deletePostData(postData)
+            }
+          }
         }
       } catch (error) {
         console.error('❌ Error watching for new posts:', error)
@@ -183,7 +243,11 @@ class EitaaSync {
         await this.sendMessage(postData.text, postData.pinned)
       }
 
-      this.processedPosts.add(postData.id.toString())
+      this.processedPosts.set(postData.id.toString(), {
+        date: postData.date,
+        editDate: postData.editDate,
+        deleted: postData.deleted
+      })
       await this.saveProcessedPosts()
       console.log(`✅ Successfully synced post ${postData.id}`)
 
@@ -272,6 +336,21 @@ class EitaaSync {
     }
   }
 
+  private async deletePostData(postData: PostData) {
+    try {
+      // Delete post JSON file only (keep media for potential re-sync)
+      const postFilePath = path.join(this.storagePath, `post_${postData.id}.json`)
+      try {
+        await fs.unlink(postFilePath)
+        console.log(`🗑️ Deleted post file: post_${postData.id}.json`)
+      } catch (error) {
+        console.warn(`⚠️ Could not delete post file ${postFilePath}:`, error)
+      }
+    } catch (error) {
+      console.error(`❌ Error deleting post data ${postData.id}:`, error)
+    }
+  }
+
   private async deletePostAndMedia(postData: PostData) {
     try {
       console.log(`🗑️ Deleting post ${postData.id} and its media...`)
@@ -305,29 +384,29 @@ class EitaaSync {
 
   private async waitForTelegramSync(): Promise<void> {
     console.log('🔍 Checking for ongoing Telegram sync...')
-    
+
     const maxWaitTime = 5 * 60 * 1000 // 5 minutes maximum wait time
     const startTime = Date.now()
-    
+
     while (await this.isTelegramSyncInProgress()) {
       if (Date.now() - startTime > maxWaitTime) {
         console.warn('⚠️  Telegram sync taking too long, proceeding with Eitaa sync anyway')
         break
       }
-      
+
       console.log('⏳ Waiting for Telegram sync to complete...')
-      await new Promise(resolve => setTimeout(resolve, 2000)) // Check every 2 seconds
+      await new Promise((resolve) => setTimeout(resolve, 2000)) // Check every 2 seconds
     }
-    
+
     console.log('✅ Telegram sync completed, proceeding with Eitaa sync')
   }
-  
+
   private async isTelegramSyncInProgress(): Promise<boolean> {
     try {
       const syncStatusFile = path.join(this.storagePath, 'telegram_sync_status.json')
       const data = await fs.readFile(syncStatusFile, 'utf-8')
       const status = JSON.parse(data)
-      
+
       return status.status === 'in_progress'
     } catch (error) {
       // If file doesn't exist or can't be read, assume no sync is in progress
