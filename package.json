@@ -4,9 +4,12 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "start": "bun run src/index.ts",
-    "sync-only": "bun run src/main.ts",
-    "dev": "bun run --watch src/index.ts"
+    "start": "bun run src/index.ts telegram-only",
+    "start:eitaa": "bun run src/index.ts eitaa",
+    "start:bale": "bun run src/index.ts bale",
+    "dev": "bun run --watch src/index.ts",
+    "dev:eitaa": "bun run --watch src/index.ts eitaa",
+    "dev:bale": "bun run --watch src/index.ts bale"
   },
   "devDependencies": {
     "@types/bun": "latest",

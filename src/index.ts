@@ -633,6 +633,9 @@ class TelegramChannelSync {
 
 // Usage
 ;(async () => {
+  // Get service type from command line arguments
+  const serviceType = process.argv[2] || 'telegram-only'
+  
   const API_ID = parseInt(process.env.API_ID || '0')
   const API_HASH = process.env.API_HASH || ''
   const SESSION = process.env.SESSION || ''
@@ -645,6 +648,10 @@ class TelegramChannelSync {
   const EITAA_TOKEN = process.env.EITAA_TOKEN || ''
   const EITAA_CHAT_ID = process.env.EITAA_CHAT_ID || ''
 
+  // Bale configuration (optional)
+  const BALE_TOKEN = process.env.BALE_TOKEN || ''
+  const BALE_CHAT_ID = process.env.BALE_CHAT_ID || ''
+
   // Validate required environment variables
   if (!API_ID || !API_HASH || !PHONE || !CHANNEL) {
     console.error(
@@ -654,52 +661,90 @@ class TelegramChannelSync {
     process.exit(1)
   }
 
+  // Validate service-specific environment variables
+  if (serviceType === 'eitaa') {
+    if (!EITAA_TOKEN || !EITAA_CHAT_ID) {
+      console.error('❌ Missing required Eitaa environment variables. Please check your .env file.')
+      console.error('Required: EITAA_TOKEN, EITAA_CHAT_ID')
+      process.exit(1)
+    }
+  } else if (serviceType === 'bale') {
+    if (!BALE_TOKEN || !BALE_CHAT_ID) {
+      console.error('❌ Missing required Bale environment variables. Please check your .env file.')
+      console.error('Required: BALE_TOKEN, BALE_CHAT_ID')
+      process.exit(1)
+    }
+  }
+
   const sync = new TelegramChannelSync(API_ID, API_HASH, SESSION, STORAGE_PATH)
   await sync.start(PHONE)
 
-  console.log('🚀 Starting CaroSync - Telegram Channel Sync...')
+  console.log(`🚀 Starting CaroSync - Telegram to ${serviceType === 'telegram-only' ? 'Telegram-only' : serviceType.charAt(0).toUpperCase() + serviceType.slice(1)} Bridge...`)
+  console.log('📱 Telegram Channel:', CHANNEL)
+  if (serviceType === 'eitaa') {
+    console.log('📤 Eitaa Chat:', EITAA_CHAT_ID)
+  } else if (serviceType === 'bale') {
+    console.log('📤 Bale Chat:', BALE_CHAT_ID)
+  }
+  console.log('💾 Storage Path:', STORAGE_PATH)
+  console.log('---')
 
-  // Start monitoring for new posts immediately (non-blocking)
-  const monitoringPromise = sync.monitorChannel(CHANNEL)
+  try {
+    // Create data folder if it doesn't exist
+    console.log('📁 Ensuring data folder exists...')
+    await fs.mkdir(STORAGE_PATH, { recursive: true })
+    console.log('✅ Data folder ready')
 
-  // Sync latest posts first
-  console.log(`📥 Syncing latest ${SYNC_LIMIT} posts...`)
-  await sync.syncLatestPosts(CHANNEL, SYNC_LIMIT)
+    // Start monitoring for new posts immediately (non-blocking)
+    const monitoringPromise = sync.monitorChannel(CHANNEL)
 
-  console.log('✅ Initial Telegram sync completed!')
+    // Sync latest posts first
+    console.log(`📥 Syncing latest ${SYNC_LIMIT} posts...`)
+    await sync.syncLatestPosts(CHANNEL, SYNC_LIMIT)
 
-  // Initialize Eitaa sync if configured (after Telegram sync is done)
-  let eitaaSync: any = null
-  if (EITAA_TOKEN && EITAA_CHAT_ID) {
-    console.log('📤 Eitaa integration enabled')
-    try {
+    console.log('✅ Initial Telegram sync completed!')
+
+    // Initialize the specified service
+    let targetSync: any = null
+    
+    if (serviceType === 'eitaa') {
+      console.log('🔍 Testing Eitaa connection...')
       const { default: EitaaSync } = await import('./eitaa-sync.js')
-      eitaaSync = new EitaaSync(EITAA_TOKEN, EITAA_CHAT_ID, STORAGE_PATH)
-
-      // Test Eitaa connection
-      const connectionTest = await eitaaSync.testConnection()
-      if (connectionTest) {
-        console.log('✅ Eitaa connection successful')
-        // Start Eitaa sync service (this will wait for any ongoing Telegram sync)
-        eitaaSync.start()
-      } else {
-        console.warn('⚠️  Eitaa connection failed, continuing with Telegram-only mode')
-        eitaaSync = null
+      targetSync = new EitaaSync(EITAA_TOKEN, EITAA_CHAT_ID, STORAGE_PATH)
+      
+      const connectionTest = await targetSync.testConnection()
+      if (!connectionTest) {
+        console.error('❌ Failed to connect to Eitaa. Please check your token and chat ID.')
+        process.exit(1)
       }
-    } catch (error) {
-      console.warn('⚠️  Eitaa integration error:', error)
-      console.warn('⚠️  Continuing with Telegram-only mode')
+      
+      console.log('✅ Eitaa connection successful')
+      await targetSync.start()
+      
+    } else if (serviceType === 'bale') {
+      console.log('🔍 Testing Bale connection...')
+      const { default: BaleSync } = await import('./bale-sync.js')
+      targetSync = new BaleSync(BALE_TOKEN, BALE_CHAT_ID, STORAGE_PATH)
+      
+      const connectionTest = await targetSync.testConnection()
+      if (!connectionTest) {
+        console.error('❌ Failed to connect to Bale. Please check your token and chat ID.')
+        process.exit(1)
+      }
+      
+      console.log('✅ Bale connection successful')
+      await targetSync.start()
     }
-  } else {
-    console.log('📱 Running in Telegram-only mode (Eitaa not configured)')
-  }
 
-  console.log('👀 Now monitoring for real-time updates...')
-  if (eitaaSync) {
-    console.log('📤 Auto-syncing to Eitaa enabled')
-  }
-  console.log('Press Ctrl+C to stop')
+    console.log(`✅ CaroSync ${serviceType} service is running successfully!`)
+    console.log('📊 Monitoring for new Telegram posts and syncing...')
+    console.log('Press Ctrl+C to stop')
 
-  // Wait for monitoring to complete (it runs indefinitely)
-  await monitoringPromise
+    // Wait for monitoring to complete (it runs indefinitely)
+    await monitoringPromise
+    
+  } catch (error) {
+    console.error(`❌ Error starting CaroSync ${serviceType} service:`, error)
+    process.exit(1)
+  }
 })()

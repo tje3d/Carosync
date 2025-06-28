@@ -1,7 +1,9 @@
 import EitaaSync from './eitaa-sync.js'
 import 'dotenv/config'
+import fs from 'fs/promises'
+import path from 'path'
 
-// Main service that coordinates Telegram monitoring and Eitaa syncing
+// Eitaa-only service that coordinates Telegram monitoring and Eitaa syncing
 ;(async () => {
   const API_ID = parseInt(process.env.API_ID || '0')
   const API_HASH = process.env.API_HASH || ''
@@ -35,6 +37,10 @@ import 'dotenv/config'
   console.log('---')
 
   try {
+    // Create data folder if it doesn't exist
+    console.log('📁 Ensuring data folder exists...')
+    await fs.mkdir(STORAGE_PATH, { recursive: true })
+    console.log('✅ Data folder ready')
     // Initialize Eitaa sync service
     const eitaaSync = new EitaaSync(EITAA_TOKEN, EITAA_CHAT_ID, STORAGE_PATH)
     
@@ -50,12 +56,12 @@ import 'dotenv/config'
     // Start Eitaa sync service
     await eitaaSync.start()
     
-    console.log('✅ CaroSync is running successfully!')
+    console.log('✅ CaroSync Eitaa service is running successfully!')
     console.log('📊 Monitoring for new Telegram posts and syncing to Eitaa...')
     console.log('Press Ctrl+C to stop')
     
   } catch (error) {
-    console.error('❌ Error starting CaroSync:', error)
+    console.error('❌ Error starting CaroSync Eitaa service:', error)
     process.exit(1)
   }
 })()

@@ -1,16 +1,16 @@
-# CaroSync - Telegram to Eitaa Bridge
+# CaroSync - Telegram Multi-Platform Bridge
 
-A powerful service that monitors Telegram channels and automatically syncs content to Eitaa platform. CaroSync downloads media files, preserves message formatting, and handles media groups seamlessly.
+A powerful service that monitors Telegram channels and automatically syncs content to multiple platforms including Eitaa and Bale. CaroSync downloads media files, preserves message formatting, and handles media groups seamlessly.
 
 ## Features
 
 - 📱 **Telegram Channel Monitoring**: Real-time monitoring of Telegram channels
-- 📤 **Eitaa Integration**: Automatic syncing to Eitaa channels/chats
+- 📤 **Multi-Platform Sync**: Automatic syncing to Eitaa and Bale platforms
 - 📁 **Media Download**: Downloads and syncs photos, videos, documents, and voice messages
 - 🖼️ **Media Groups**: Handles album/media group posts correctly
-- 🔄 **Edit Detection**: Syncs edited messages and media
+- 🔄 **Edit Detection**: Syncs edited messages and media (supported on Bale)
+- 🗑️ **Delete Handling**: Handles message deletions (supported on Bale)
 - 📌 **Pin Support**: Tracks pinned messages
-- 🗑️ **Delete Handling**: Marks deleted messages appropriately
 - 💾 **Persistent Storage**: Saves all data locally with JSON format
 - 🔄 **Resume Support**: Continues from where it left off after restart
 
@@ -20,7 +20,8 @@ A powerful service that monitors Telegram channels and automatically syncs conte
 
 - [Bun](https://bun.sh/) runtime
 - Telegram API credentials
-- Eitaa API token
+- Eitaa API token (optional)
+- Bale API token (optional)
 
 ### 2. Installation
 
@@ -47,10 +48,15 @@ cp .env.example .env
 - Set your phone number in `PHONE`
 - Set the channel username or ID in `CHANNEL`
 
-#### Eitaa Configuration
+#### Eitaa Configuration (Optional)
 - Get your bot token from [eitaayar.ir](https://eitaayar.ir) panel
 - Set `EITAA_TOKEN` with your bot token
 - Set `EITAA_CHAT_ID` with your target channel/chat ID or username (without @)
+
+#### Bale Configuration (Optional)
+- Get your bot token from @BotFather on Bale
+- Set `BALE_TOKEN` with your bot token
+- Set `BALE_CHAT_ID` with your target channel/chat ID or username (e.g., @carosync)
 
 ```env
 # Telegram API Configuration
@@ -60,9 +66,13 @@ SESSION=
 PHONE=+1234567890
 CHANNEL=@your_channel
 
-# Eitaa API Configuration
+# Eitaa API Configuration (Optional)
 EITAA_TOKEN=your_eitaa_token
 EITAA_CHAT_ID=your_chat_id
+
+# Bale API Configuration (Optional)
+BALE_TOKEN=your_bale_token
+BALE_CHAT_ID=@carosync
 
 # Optional settings
 STORAGE_PATH=./data
@@ -71,9 +81,9 @@ SYNC_LIMIT=5
 
 ## Usage
 
-### Full Service (Telegram + Eitaa)
+### Full Service (Telegram + Multi-Platform Sync)
 
-Run both Telegram monitoring and Eitaa syncing:
+Run Telegram monitoring with automatic syncing to configured platforms:
 
 ```bash
 bun run start
@@ -82,11 +92,11 @@ bun run start
 This will:
 1. Start monitoring the Telegram channel
 2. Download and store new messages/media
-3. Automatically sync everything to Eitaa
+3. Automatically sync everything to configured platforms (Eitaa and/or Bale)
 
-### Eitaa Sync Only
+### Platform Sync Only
 
-If you already have data stored and want to sync only to Eitaa:
+If you already have data stored and want to sync only to configured platforms:
 
 ```bash
 bun run sync-only
@@ -110,13 +120,25 @@ bun run dev
 4. **Data Storage**: Saves message data as JSON files and media in organized folders
 5. **Media Groups**: Handles album posts by grouping related messages
 
-### Eitaa Syncing (`src/eitaa-sync.ts`)
+### Platform Syncing
+
+#### Eitaa Syncing (`src/eitaa-sync.ts`)
 
 1. **Connection Test**: Verifies Eitaa API credentials on startup
 2. **Existing Data Sync**: Syncs any previously stored posts that haven't been sent
 3. **Real-time Sync**: Watches for new post files and syncs them immediately
 4. **Rate Limiting**: Implements delays to respect API limits
 5. **Progress Tracking**: Keeps track of synced posts to avoid duplicates
+
+#### Bale Syncing (`src/bale-sync.ts`)
+
+1. **Connection Test**: Verifies Bale API credentials on startup
+2. **Existing Data Sync**: Syncs any previously stored posts that haven't been sent
+3. **Real-time Sync**: Watches for new post files and syncs them immediately
+4. **Edit Support**: Updates existing messages when source is edited
+5. **Delete Support**: Removes messages when source is deleted
+6. **Rate Limiting**: Implements delays to respect API limits
+7. **Progress Tracking**: Keeps track of synced posts to avoid duplicates
 
 ## File Structure
 
@@ -129,7 +151,8 @@ data/
 │   │   ├── photo_789.jpg
 │   │   └── video_790.mp4
 │   └── 456/               # Media for message 456
-└── eitaa_processed.json   # Tracking synced posts
+├── eitaa_processed.json   # Tracking Eitaa synced posts
+└── bale_processed.json    # Tracking Bale synced posts
 ```
 
 ## API Reference
@@ -141,6 +164,17 @@ data/
 - `sendFile`: Send media files with optional captions
 
 For detailed Eitaa API documentation, see `doc/eitaa.md`.
+
+### Bale API Methods Used
+
+- `getMe`: Test connection and get bot info
+- `sendMessage`: Send text messages
+- `sendPhoto`: Send photo files
+- `sendDocument`: Send document files
+- `editMessageText`: Edit existing text messages
+- `deleteMessage`: Delete messages
+
+Bale API is compatible with Telegram Bot API format.
 
 ## Troubleshooting
 
@@ -156,14 +190,19 @@ For detailed Eitaa API documentation, see `doc/eitaa.md`.
    - Check if EITAA_CHAT_ID exists and bot has access
    - Test API at https://eitaayar.ir/testApi
 
-3. **Media Download Issues**
+3. **Bale Connection Failed**
+   - Verify your BALE_TOKEN is correct
+   - Check if BALE_CHAT_ID exists and bot has access
+   - Ensure bot is added to the target channel/chat
+
+4. **Media Download Issues**
    - Check available disk space
    - Verify write permissions in storage directory
    - Large files may take time to download
 
-4. **Sync Issues**
+5. **Sync Issues**
    - Check network connectivity
-   - Verify Eitaa API rate limits
+   - Verify API rate limits for configured platforms
    - Review logs for specific error messages
 
 ### Logs
@@ -172,7 +211,7 @@ The service provides detailed logging:
 - ✅ Success operations
 - ❌ Error messages
 - 📱 Telegram events
-- 📤 Eitaa sync status
+- 📤 Platform sync status (Eitaa/Bale)
 - 📊 Progress indicators
 
 ## Contributing
